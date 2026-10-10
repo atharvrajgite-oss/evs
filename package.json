@@ -1,12 +1,20 @@
 {
   "name": "solnet-ai",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
+  "description": "SolNet AI — Peer-to-Peer (P2P) Rooftop Solar Energy Router & Virtual Microgrid",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "build:server": "tsc -p tsconfig.server.json",
+    "server": "npm run build:server && node dist/server.js",
+    "test": "npm run build:server && node dist/test.js",
+    "sim": "npm run build:server && node dist/index.js",
+    "aws:lambda": "npm run build:server && node dist/aws/lambdaRouter.js",
+    "aws:iot": "npm run build:server && node dist/aws/iotSimulator.js",
+    "aws:bedrock": "npm run build:server && node dist/aws/bedrockAgent.js"
   },
   "dependencies": {
     "@react-three/drei": "^9.102.0",
@@ -32,6 +40,6 @@
     "eslint-config-next": "14.1.4",
     "postcss": "^8.5.29",
     "tailwindcss": "^3.4.19",
-    "typescript": "^5.9.3"
+    "typescript": "^5.4.5"
   }
 }

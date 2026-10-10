@@ -9,10 +9,16 @@
  * 4. Financial Ledger (Double-entry balance, Counterfactual savings, CO2 offset).
  */
 
-export * from './ml/mockData';
-export * from './ml/forecaster';
-export * from './agent/tariffAgent';
+export * from './sim/simulator';
+export * from './engine/policy';
+export * from './engine/router';
 export * from './engine/ledger';
+export * from './ml/forecaster';
+export * from './ml/mockData';
+export * from './agent/tariffAgent';
+export * from './aws/iotSimulator';
+export * from './aws/lambdaRouter';
+export * from './aws/bedrockAgent';
 
 import {
   getMockTelemetry,
