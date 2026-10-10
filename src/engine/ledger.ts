@@ -10,8 +10,8 @@
  * 5. Cedar Policy Traceability auditing per transaction.
  */
 
-import { RoutingDecision } from '../ml/mockData.js';
-import { DynamicTariffQuote } from '../agent/tariffAgent.js';
+import { RoutingDecision } from '../ml/mockData';
+import { DynamicTariffQuote } from '../agent/tariffAgent';
 
 // ==========================================
 // 1. DATA CONTRACTS

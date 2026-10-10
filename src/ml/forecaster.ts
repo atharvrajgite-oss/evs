@@ -9,7 +9,7 @@
  * 4. Bedrock / Strands Agents SDK prompt synthesis for explainable AI reasoning.
  */
 
-import { HouseTelemetry, WeatherTelemetry, calculateClearSkyFactor } from './mockData.js';
+import { HouseTelemetry, WeatherTelemetry, calculateClearSkyFactor } from './mockData';
 
 // ==========================================
 // 1. DATA CONTRACTS

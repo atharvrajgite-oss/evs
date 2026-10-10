@@ -41,6 +41,15 @@ export const ParticleStream: React.FC<ParticleStreamProps> = ({
     return new THREE.BufferGeometry().setFromPoints(linePoints);
   }, [linePoints]);
 
+  const lineObject = useMemo(() => {
+    const mat = new THREE.LineBasicMaterial({
+      color: 0x38bdf8,
+      transparent: true,
+      opacity: 0.25,
+    });
+    return new THREE.Line(lineGeometry, mat);
+  }, [lineGeometry]);
+
   // Particle positions along the curve
   const { geometry, offsets } = useMemo(() => {
     const positions = new Float32Array(particleCount * 3);
@@ -81,14 +90,7 @@ export const ParticleStream: React.FC<ParticleStreamProps> = ({
   return (
     <group>
       {/* Subtle guide trajectory line */}
-      <line geometry={lineGeometry}>
-        <lineBasicMaterial
-          color="#38bdf8"
-          transparent
-          opacity={0.25}
-          linewidth={1}
-        />
-      </line>
+      <primitive object={lineObject} />
 
       {/* Flowing energy particles */}
       <points ref={pointsRef} geometry={geometry}>

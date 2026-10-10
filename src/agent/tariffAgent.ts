@@ -9,7 +9,7 @@
  * 4. Win-Win Prosumer Margin & Consumer Savings calculation.
  */
 
-import { NeighborhoodForecast } from '../ml/forecaster.js';
+import { NeighborhoodForecast } from '../ml/forecaster';
 
 // ==========================================
 // 1. DATA CONTRACTS & CONFIGURATION
