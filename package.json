@@ -9,12 +9,27 @@
   },
   "scripts": {
     "start": "node src/cli.ts --serve",
+    "dev": "node --watch src/cli.ts --serve",
     "sim": "node src/cli.ts",
+    "sim:day": "node src/cli.ts --ticks 288",
     "typecheck": "tsc --noEmit",
-    "test": "node --test src/**/*.test.ts"
+    "test": "node --test src/**/*.test.ts",
+    "check": "npm run typecheck && npm test",
+    "aws:iot": "node src/aws/iotSimulator.ts --mock",
+    "aws:bedrock": "node src/aws/bedrockAgent.ts --mock",
+    "aws:lambda": "node src/aws/lambdaRouter.ts --test",
+    "deploy:build": "sam build",
+    "deploy:router": "sam build && sam deploy --guided"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@types/three": "^0.186.0",
+    "esbuild": "^0.25.0",
     "typescript": "^5.7.2"
+  },
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1149.0",
+    "@aws-sdk/client-iot-data-plane": "^3.1149.0",
+    "three": "^0.186.1"
   }
 }

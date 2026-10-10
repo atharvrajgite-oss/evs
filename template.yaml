@@ -1,0 +1,112 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  SolNet AI cloud deployment: virtual smart meters publish to AWS IoT Core,
+  a topic rule invokes the Lambda energy router, decisions settle into a
+  DynamoDB ledger, and the local server streams the same frames to the 3D
+  dashboard over SSE.
+
+Parameters:
+  TelemetryTopic:
+    Type: String
+    Default: solnet/neighborhood/telemetry
+    Description: MQTT topic the neighborhood's smart meters publish to.
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-3-5-sonnet-20241022-v2:0
+    Description: Model the AI tariff agent calls on Amazon Bedrock.
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Timeout: 15
+    MemorySize: 512
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        AWS_NODEJS_CONNECTION_REUSE_ENABLED: '1'
+        SOLNET_BEDROCK_MODEL: !Ref BedrockModelId
+        SOLNET_FEEDER_ID: FDR-07
+
+Resources:
+  # ---------------------------------------------------------------- router
+  # The handler in src/aws/lambdaRouter.ts: Cedar policy evaluation + the
+  # solar -> load -> battery -> peers -> grid priority router, returned as a
+  # Lambda proxy response. TypeScript is bundled at deploy time with esbuild,
+  # so the runtime never needs a build step of its own.
+  EnergyRouterFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      BuildMethod: esbuild
+      BuildProperties:
+        EntryPoints:
+          - src/aws/lambdaRouter.ts
+        Format: esm
+        Minify: true
+        Target: es2022
+        OutExtension:
+          - .js=.mjs
+        Sourcemap: false
+    Properties:
+      FunctionName: solnet-energy-router
+      Handler: lambdaRouter.handler
+      Description: SolNet AI energy router - Cedar policies + P2P trade matching
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref LedgerTable
+        - Statement:
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource: '*'
+      Events:
+        Telemetry:
+          Type: IoTRule
+          Properties:
+            Topic: !Ref TelemetryTopic
+            Enabled: true
+    DependsOn:
+      - RouterInvokePermission
+
+  # IoT Core may only invoke the function once this resource exists.
+  RouterInvokePermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref EnergyRouterFunction
+      Action: lambda:InvokeFunction
+      Principal: iot.amazonaws.com
+      SourceArn: !GetAtt TelemetryTopicRule.Arn
+
+  # --------------------------------------------------------------- ledger
+  # Stands in for the in-memory ledger in src/engine/ledger.ts: one item per
+  # household per tick, plus a settlement row per executed peer trade.
+  LedgerTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: solnet-ledger
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+Outputs:
+  EnergyRouterArn:
+    Description: Invoke this from the IoT topic rule or an API integration.
+    Value: !GetAtt EnergyRouterFunction.Arn
+  LedgerTableName:
+    Description: DynamoDB ledger holding per-household settlement rows.
+    Value: !Ref LedgerTable
+  TelemetryTopicName:
+    Description: MQTT topic used by the virtual smart meters.
+    Value: !Ref TelemetryTopic

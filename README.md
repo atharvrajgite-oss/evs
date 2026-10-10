@@ -9,13 +9,27 @@ policy engine, and a peer-to-peer energy router — with a live animated dashboa
 ```
 npm install
 npm start           # dashboard on http://127.0.0.1:8787
+npm run dev         # same, with --watch auto-restart
 npm test            # 18 tests
 npm run typecheck
 npm run sim -- --ticks 288    # headless: simulate one day, print a summary
+npm run check       # typecheck + tests
+
+# AWS integrations (all offline-first, no credentials required)
+npm run aws:lambda  # TEST_LAMBDA harness: run the Lambda energy router locally
+npm run aws:iot     # publish a few smart-meter telemetry frames (mock MQTT)
+npm run aws:bedrock # Bedrock AI tariff agent, deterministic heuristic fallback
+
+# Deployment (needs the AWS SAM CLI + credentials)
+npm run deploy:build
+npm run deploy:router
 ```
 
 Requires **Node 22.6+** (Node runs the TypeScript sources directly via type
-stripping, so there is no build step and no runtime dependencies at all).
+stripping, so there is no build step for the local simulator). The three
+`npm run aws:*` commands and the dashboard work fully offline: when AWS
+credentials or the `USE_MOCK_*` flags are absent they switch to deterministic
+local fallbacks instead of making network calls.
 
 ---
 
@@ -37,8 +51,11 @@ actually use it, and prices the transfer so both sides win.
 | Policy engine | Cedar-style declarative rules: deny-by-default, `forbid` beats `permit` | `src/engine/policy.ts` |
 | Energy router | solar → own load → battery → peers → grid → curtail, gated by policy and a voltage proxy | `src/engine/router.ts` |
 | Ledger | Per-house kWh, credits, cash flows, savings vs a no-microgrid counterfactual | `src/engine/ledger.ts` |
-| Server | Dependency-free HTTP + Server-Sent Events live stream | `src/server.ts` |
-| Dashboard | Animated microgrid map, forecast chart, skill breakdown, agent reasoning | `public/` |
+| Server | Dependency-free HTTP + Server-Sent Events live stream, with heartbeat pulses | `src/server.ts` |
+| Telemetry | Smart-meter frames → `solnet/neighborhood/telemetry` on AWS IoT Core | `src/aws/iotSimulator.ts` |
+| Energy router (Lambda) | Cedar grid-safety checks + the priority router, returned as a proxy response | `src/aws/lambdaRouter.ts` |
+| AI tariff agent | Bedrock `Converse` call returning `{tariff_adjustment_pct, reasoning}` | `src/aws/bedrockAgent.ts` |
+| Dashboard | 3D microgrid (Three.js), glassmorphism HUD, live charts, AI reasoning log | `public/` |
 
 ## Why the forecasting layer is built this way
 
@@ -105,9 +122,11 @@ persistence: **+10% skill**, RMSE 2.5 kW vs 2.8 kW for persistence, MAPE ~14%.
 
 ## Demo script
 
-1. **Open the dashboard.** Watch the map: yellow rings are generating roofs, the
-   green arc is battery state of charge, purple particles are peer energy moving
-   between houses, blue EV dots mark cars that can absorb surplus.
+1. **Open the dashboard.** The 3D street shows every household: rooftops glow
+   gold as generation rises, a green halo on the ground tracks each battery's
+   state of charge, warm windows brighten with live demand, and cyan/purple
+   particle streams travel between houses during active P2P trades. Drag to
+   orbit, scroll to zoom.
 2. **Read the tariff agent panel.** It shows the 4-hour energy balance, the
    scarcity index, and how the peer price was derived from the feed-in floor and
    the retail ceiling. Nothing is hard-coded.
@@ -128,10 +147,66 @@ Controls: pause, speed (1–12×), reset, scenario switching (`POST /api/control
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/state` | current frame (the same payload as the stream) |
-| `GET /api/stream` | Server-Sent Events, one frame per simulated tick |
-| `GET /api/config` | household count, capacity, policies, scenarios |
-| `POST /api/control` | `{speed, paused, reset, cloud, scenario, policies}` |
+| `GET /api/state` | current frame (stream payload + AI tariff log) |
+| `GET /api/stream` | Server-Sent Events, one frame per simulated tick, plus a `: heartbeat` comment every 15 s |
+| `GET /api/config` | household metadata, capacities, active policy set, scenarios, AI/telemetry mode |
+| `POST /api/control` | `{speed (1–12×), paused, reset, cloud, scenario, policies}` |
+
+SSE response headers: `Content-Type: text/event-stream`, `Cache-Control:
+no-cache, no-transform`, `Connection: keep-alive`, `X-Accel-Buffering: no`.
+
+## Cloud architecture
+
+```mermaid
+flowchart LR
+  SM[Virtual Smart Meters] -->|MQTT| IOT[AWS IoT Core]
+  IOT -->|topic rule| LAMBDA[AWS Lambda Router Engine]
+  LAMBDA --> VP[Amazon Verified Permissions<br/>Cedar Policy]
+  LAMBDA --> DDB[Amazon DynamoDB Ledger]
+  LAMBDA --> BR[Amazon Bedrock AI Agent]
+  LAMBDA -->|SSE Stream| UI[Next.js / 3D Dashboard UI]
+
+  SIM[Local Simulator<br/>src/sim] -->|same router + policy code| LAMBDA
+  SIM -->|GET /api/state · POST /api/control| UI
+  BED[AITariffAgent] -.->|ConverseCommand| BR
+  PUB[IoTTelemetryPublisher] -.->|PublishCommand| IOT
+```
+
+The three AWS modules wrap **the same** `src/engine/router.ts` and
+`src/engine/policy.ts` used by the local simulator, so a decision taken in the
+cloud and a decision taken in the demo are produced by one implementation.
+
+| Module | AWS service | Offline fallback |
+|---|---|---|
+| `src/aws/iotSimulator.ts` | `IoTDataPlaneClient` + `PublishCommand` → `solnet/neighborhood/telemetry` (region `AWS_REGION \|\| us-east-1`) | `USE_MOCK_AWS_IOT=true` *or* missing credentials → `[MOCK AWS IOT] Published tick …` on stdout |
+| `src/aws/lambdaRouter.ts` | Lambda proxy handler: Cedar grid-safety (voltage, feeder limits) + P2P priority routing | `--test` / `TEST_LAMBDA=true` runs it in-process with a synthetic neighborhood |
+| `src/aws/bedrockAgent.ts` | `BedrockRuntimeClient` + `ConverseCommand`, model `anthropic.claude-3-5-sonnet-20241022-v2:0` (or `amazon.nova-micro-v1:0`) | `USE_MOCK_AWS_BEDROCK=true` *or* missing credentials → deterministic reserve-margin heuristic |
+
+The dashboard's **Amazon Bedrock · AI tariff** panel is fed by the server: once
+per simulated hour it calls the agent with `{cloud_cover_pct, solar_yield_kw,
+lookahead_hours}` and appends the structured
+`{tariff_adjustment_pct, reasoning}` reply to the log streamed with every frame.
+
+## Deployment
+
+`template.yaml` is an AWS SAM template:
+
+- `EnergyRouterFunction` — `nodejs22.x`, TypeScript bundled at deploy time with
+  esbuild (no runtime build step), invoked by an IoT topic rule on
+  `solnet/neighborhood/telemetry`.
+- `LedgerTable` — on-demand DynamoDB table (`pk`/`sk`) standing in for the
+  in-memory ledger.
+- `RouterInvokePermission` — grants IoT Core permission to invoke the router.
+
+```
+npm run deploy:build      # sam build
+npm run deploy:router     # sam build && sam deploy --guided
+```
+
+A production wiring would transform the meter document into the router's
+`{houses, states, prices}` envelope (EventBridge/Step Functions) before invoking
+the function; the local harness (`npm run aws:lambda`) exercises that envelope
+directly.
 
 ## Tests
 
